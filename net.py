@@ -130,8 +130,7 @@ class Net(nn.Module):
         assert (target.requires_grad is False)
         input_mean, input_std = calc_mean_std(input)
         target_mean, target_std = calc_mean_std(target)
-        return self.mse_loss(input_mean, target_mean) + \
-               self.mse_loss(input_std, target_std)
+        return self.mse_loss(input_mean, target_mean) + self.mse_loss(input_std, target_std)
 
     def forward(self, content_images, style_images, stylized_images):
         style_feats = self.encode_with_intermediate(style_images)

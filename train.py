@@ -84,7 +84,7 @@ parser.add_argument('--n_threads', type=int, default=8)
 parser.add_argument('--print_interval', type=int, default=100)
 parser.add_argument('--save_model_interval', type=int, default=5000)
 parser.add_argument('--start_iter', type=int, default=0, help='starting iteration')
-parser.add_argument('--resume', default='glow.pth', type=str, metavar='PATH',
+parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='file name of the latest checkpoint')
 
 # glow parameters
@@ -111,7 +111,6 @@ device = torch.device('cuda')
 
 if not os.path.exists(args.save_dir):
     os.mkdir(args.save_dir)
-args.resume = os.path.join(args.save_dir, args.resume)
 
 if not os.path.exists(args.log_dir):
     os.mkdir(args.log_dir)
@@ -129,16 +128,19 @@ glow_single = Glow(args.input_channel, args.n_flow, args.n_block, affine=args.af
 # l1 loss
 mseloss = nn.MSELoss()
 
+# optimizer
+optimizer = torch.optim.Adam(glow_single.parameters(), lr=args.lr)
+
 # -----------------------resume training------------------------
 if args.resume:
-    if os.path.isfile(args.resume):
-        print("--------loading checkpoint----------")
-        print("=> loading checkpoint '{}'".format(args.resume))
-        checkpoint = torch.load(args.resume)
-        args.start_iter = checkpoint['iter']
-        glow_single.load_state_dict(checkpoint['state_dict'])
-    else:
-        print("--------no checkpoint found---------")
+    assert os.path.isfile(args.resume), "--------no checkpoint found---------"
+    print("--------loading checkpoint----------")
+    print("=> loading checkpoint '{}'".format(args.resume))
+    checkpoint = torch.load(args.resume, map_location='cuda')
+    args.start_iter = checkpoint['iter']
+    glow_single.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+
 glow_single = glow_single.to(device)
 glow = nn.DataParallel(glow_single)
 glow.train()
@@ -161,10 +163,6 @@ style_iter = iter(data.DataLoader(
     sampler=InfiniteSamplerWrapper(style_dataset),
     num_workers=args.n_threads))
 
-optimizer = torch.optim.Adam(glow.module.parameters(), lr=args.lr)
-if args.resume:
-    if os.path.isfile(args.resume):
-        optimizer.load_state_dict(checkpoint['optimizer'])
 
 log_c = []
 log_s = []
@@ -241,5 +239,5 @@ for i in range(args.start_iter, args.max_iter):
             state_dict[key] = state_dict[key].to(torch.device('cpu'))
 
         state = {'iter': i, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
-        torch.save(state, args.resume)
+        torch.save(state, os.path.join(args.save_dir, "%06d.pth" % i))
 
