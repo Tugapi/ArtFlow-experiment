@@ -39,7 +39,7 @@ class AlignedDataSet(data.Dataset):
 
     It requires two directories to host training images from content domain and from style domain respectively.
     """
-    def __init__(self, args, transform):
+    def __init__(self, args):
         super(AlignedDataSet, self).__init__()
         self.content_dir = args.content_dir
         self.style_dir = args.style_dir
