@@ -11,6 +11,8 @@ from torchvision import transforms
 from torchvision.utils import save_image
 import time
 
+from custom_dataset.flatfolder_dataset import train_transform, FlatFolderDataset
+from custom_dataset.aligned_dataset import AlignedDataSet
 import net
 from sampler import InfiniteSamplerWrapper
 
@@ -19,35 +21,6 @@ from math import log, sqrt, pi
 cudnn.benchmark = True
 Image.MAX_IMAGE_PIXELS = None  # Disable DecompressionBombError
 ImageFile.LOAD_TRUNCATED_IMAGES = True  # Disable OSError: image file is truncated
-
-
-def train_transform():
-    transform_list = [
-        transforms.Resize(size=(512, 512)),
-        transforms.RandomCrop(256),
-        transforms.ToTensor()
-    ]
-    return transforms.Compose(transform_list)
-
-
-class FlatFolderDataset(data.Dataset):
-    def __init__(self, root, transform):
-        super(FlatFolderDataset, self).__init__()
-        self.root = root
-        self.paths = os.listdir(self.root)
-        self.transform = transform
-
-    def __getitem__(self, index):
-        path = self.paths[index]
-        img = Image.open(os.path.join(self.root, path)).convert('RGB')
-        img = self.transform(img)
-        return img
-
-    def __len__(self):
-        return len(self.paths)
-
-    def name(self):
-        return 'FlatFolderDataset'
 
 
 def adjust_learning_rate(optimizer, iteration_count):
@@ -89,7 +62,8 @@ parser.add_argument('--resume', default='', type=str, metavar='PATH',
 
 # glow parameters
 parser.add_argument('--input_channel', default=3, type=8, help='input image channels')
-parser.add_argument('--img_size', default=128, type=int, help='input image size')
+parser.add_argument('--load_size', default=256, type=int, help='scale image to this size')
+parser.add_argument('--img_size', default=128, type=int, help='final input image size')
 parser.add_argument('--n_flow', default=8, type=int, help='number of flows in each block')# 32
 parser.add_argument('--n_block', default=2, type=int, help='number of blocks')# 4
 parser.add_argument('--no_lu', action='store_true', help='use plain convolution instead of LU decomposed version')
@@ -149,8 +123,8 @@ glow.train()
 
 
 # -------------------------------------------------------------
-content_tf = train_transform()
-style_tf = train_transform()
+content_tf = train_transform(args.load_size, args.img_size)
+style_tf = train_transform(args.load_size, args.img_size)
 
 content_dataset = FlatFolderDataset(args.content_dir, content_tf)
 style_dataset = FlatFolderDataset(args.style_dir, style_tf)
