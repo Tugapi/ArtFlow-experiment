@@ -89,6 +89,7 @@ parser.add_argument('--resume', default='', type=str, metavar='PATH',
 
 # glow parameters
 parser.add_argument('--input_channel', default=3, type=8, help='input image channels')
+parser.add_argument('--img_size', default=128, type=int, help='input image size')
 parser.add_argument('--n_flow', default=8, type=int, help='number of flows in each block')# 32
 parser.add_argument('--n_block', default=2, type=int, help='number of blocks')# 4
 parser.add_argument('--no_lu', action='store_true', help='use plain convolution instead of LU decomposed version')
