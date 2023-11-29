@@ -9,6 +9,8 @@ from PIL import Image
 from PIL import ImageFile
 from torchvision import transforms
 from torchvision.utils import save_image
+import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler
 import time
 
 from custom_dataset.flatfolder_dataset import train_transform, FlatFolderDataset
@@ -40,13 +42,15 @@ parser.add_argument('--vgg', type=str, default='models/vgg_normalised.pth')
 
 # training options
 parser.add_argument('--save_dir', default='experiments',
-                    help='Directory to save the model')
+                    help='Directory to save the model, the checkpoints and the intermediate results would be saved at save_dir/checkpoints and save_dir/images respectively')
 parser.add_argument('--log_dir', default='./logs',
                     help='Directory to save the log')
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--lr_decay', type=float, default=5e-5)
 parser.add_argument('--max_iter', type=int, default=160000)
+parser.add_argument('--max_epoch', type=int, default=300)
 parser.add_argument('--batch_size', type=int, default=4)
+parser.add_argument('--aligned', action='store_true', help='use aligned dataset instead of unaligned dataset')
 
 parser.add_argument('--mse_weight', type=float, default=0)
 parser.add_argument('--style_weight', type=float, default=1)
@@ -56,12 +60,15 @@ parser.add_argument('--content_weight', type=float, default=0.1)
 parser.add_argument('--n_threads', type=int, default=8)
 parser.add_argument('--print_interval', type=int, default=100)
 parser.add_argument('--save_model_interval', type=int, default=5000)
+parser.add_argument('--save_epoch_freq', type=int, default=5, help='frequency of saving checkpoints and images at the end of epochs')
+parser.add_argument("--n_save_img", default=5, type=int, help="number of saved images")
 parser.add_argument('--start_iter', type=int, default=0, help='starting iteration')
+parser.add_argument('--start_epoch', type=int, default=0, help='starting epoch')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='file name of the latest checkpoint')
 
 # glow parameters
-parser.add_argument('--input_channel', default=3, type=8, help='input image channels')
+parser.add_argument('--input_channel', default=3, type=int, help='input image channels')
 parser.add_argument('--load_size', default=256, type=int, help='scale image to this size')
 parser.add_argument('--img_size', default=128, type=int, help='final input image size')
 parser.add_argument('--n_flow', default=8, type=int, help='number of flows in each block')# 32
@@ -71,6 +78,7 @@ parser.add_argument('--affine', default=False, type=bool, help='use affine coupl
 parser.add_argument('--operator', type=str, default='adain',
                     help='style feature transfer operator')
 
+local_rank = int(os.environ["LOCAL_RANK"])
 args = parser.parse_args()
 
 if args.operator == 'wct':
@@ -82,7 +90,8 @@ elif args.operator == 'decorator':
 else:
     raise('Not implemented operator', args.operator)
     
-device = torch.device('cuda')
+dist.init_process_group(backend="nccl")
+torch.cuda.set_device(local_rank)
 
 if not os.path.exists(args.save_dir):
     os.mkdir(args.save_dir)
@@ -94,8 +103,7 @@ if not os.path.exists(args.log_dir):
 vgg = net.vgg
 vgg.load_state_dict(torch.load(args.vgg))
 encoder = net.Net(vgg)
-encoder = nn.DataParallel(encoder)
-encoder.to(device)
+encoder = encoder.to(local_rank)
 
 # glow
 glow_single = Glow(args.input_channel, args.n_flow, args.n_block, affine=args.affine, conv_lu=not args.no_lu)
@@ -116,103 +124,177 @@ if args.resume:
     glow_single.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer'])
 
-glow_single = glow_single.to(device)
-glow = nn.DataParallel(glow_single)
+glow_single = glow_single.to(local_rank)
+glow = nn.parallel.DistributedDataParallel(glow_single, device_ids=[local_rank], output_device=local_rank)
 glow.train()
-
-
-
-# -------------------------------------------------------------
-content_tf = train_transform(args.load_size, args.img_size)
-style_tf = train_transform(args.load_size, args.img_size)
-
-content_dataset = FlatFolderDataset(args.content_dir, content_tf)
-style_dataset = FlatFolderDataset(args.style_dir, style_tf)
-
-content_iter = iter(data.DataLoader(
-    content_dataset, batch_size=args.batch_size,
-    sampler=InfiniteSamplerWrapper(content_dataset),
-    num_workers=args.n_threads))
-style_iter = iter(data.DataLoader(
-    style_dataset, batch_size=args.batch_size,
-    sampler=InfiniteSamplerWrapper(style_dataset),
-    num_workers=args.n_threads))
-
 
 log_c = []
 log_s = []
 log_mse = []
 Time = time.time()
-# -----------------------training------------------------
-for i in range(args.start_iter, args.max_iter):
-    adjust_learning_rate(optimizer, iteration_count=i)
-    content_images = next(content_iter).to(device)
-    style_images = next(style_iter).to(device)
 
-    # glow forward: real -> z_real, style -> z_style
-    if i == args.start_iter:
-        with torch.no_grad():
-            _ = glow.module(content_images, forward=True)
-            continue
 
-    # (log_p, logdet, z_outs) = glow()
-    z_c = glow(content_images, forward=True)
-    z_s = glow(style_images, forward=True)
-    # reverse 
-    stylized = glow(z_c, forward=False, style=z_s)
 
-    loss_c, loss_s = encoder(content_images, style_images, stylized)
-    loss_c = loss_c.mean()
-    loss_s = loss_s.mean()
-    loss_mse = mseloss(content_images, stylized)
-    loss_style = args.content_weight*loss_c + args.style_weight*loss_s + args.mse_weight*loss_mse
+# -------------------------------------------------------------
+if not (args.aligned):
+    content_tf = train_transform(args.load_size, args.img_size)
+    style_tf = train_transform(args.load_size, args.img_size)
 
-    # optimizer update
-    optimizer.zero_grad()
-    loss_style.backward()
-    nn.utils.clip_grad_norm(glow.module.parameters(), 5)
-    optimizer.step()
-    
-    # update loss log
-    log_c.append(loss_c.item())
-    log_s.append(loss_s.item())
-    log_mse.append(loss_mse.item())
+    content_dataset = FlatFolderDataset(args.content_dir, content_tf)
+    style_dataset = FlatFolderDataset(args.style_dir, style_tf)
 
-    # save image
-    if i % args.print_interval == 0:
-        with torch.no_grad():
-            # stylized ---> z ---> content
-            z_stylized = glow(stylized, forward=True)
-            real = glow(z_stylized, forward=False, style=z_c)
-            
-            # pick another content
-            another_content = next(content_iter).to(device)
+    content_iter = iter(data.DataLoader(
+        content_dataset, batch_size=args.batch_size,
+        sampler=InfiniteSamplerWrapper(content_dataset),
+        num_workers=args.n_threads))
+    style_iter = iter(data.DataLoader(
+        style_dataset, batch_size=args.batch_size,
+        sampler=InfiniteSamplerWrapper(style_dataset),
+        num_workers=args.n_threads))
 
-            # stylized ---> z ---> another real
-            z_ac = glow(another_content, forward=True)
-            another_real = glow(z_stylized, forward=False, style=z_ac)
+    # -----------------------training------------------------
+    for i in range(args.start_iter, args.max_iter):
+        adjust_learning_rate(optimizer, iteration_count=i)
+        content_images = next(content_iter).to(local_rank)
+        style_images = next(style_iter).to(local_rank)
 
-        output_name = os.path.join(args.save_dir, "%06d.jpg" % i)
-        output_images = torch.cat((content_images.cpu(), style_images.cpu(), stylized.cpu(), 
-                                    real.cpu(), another_content.cpu(), another_real.cpu()), 
-                                  0)
-        save_image(output_images, output_name, nrow=args.batch_size)
-        
-        print("iter %d   time/iter: %.2f   loss_c: %.3f   loss_s: %.3f   loss_mse: %.3f" % (i, 
-                                                                      (time.time()-Time)/args.print_interval, 
-                                                                      np.mean(np.array(log_c)), np.mean(np.array(log_s)),
-                                                                      np.mean(np.array(log_mse))
-                                                                       ))
-        log_c = []
-        log_s = []
-        Time = time.time()
+        # glow forward: real -> z_real, style -> z_style
+        if i == args.start_iter:
+            with torch.no_grad():
+                _ = glow.module(content_images, forward=True)
+                continue
 
-        
-    if (i + 1) % args.save_model_interval == 0 or (i + 1) == args.max_iter:
-        state_dict = glow.module.state_dict()
-        for key in state_dict.keys():
-            state_dict[key] = state_dict[key].to(torch.device('cpu'))
+        # (log_p, logdet, z_outs) = glow()
+        z_c = glow(content_images, forward=True)
+        z_s = glow(style_images, forward=True)
+        # reverse
+        stylized = glow(z_c, forward=False, style=z_s)
 
-        state = {'iter': i, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
-        torch.save(state, os.path.join(args.save_dir, "%06d.pth" % i))
+        loss_c, loss_s = encoder(content_images, style_images, stylized)
+        loss_c = loss_c.mean()
+        loss_s = loss_s.mean()
+        loss_mse = mseloss(content_images, stylized)
+        loss_style = args.content_weight*loss_c + args.style_weight*loss_s + args.mse_weight*loss_mse
 
+        # optimizer update
+        optimizer.zero_grad()
+        loss_style.backward()
+        nn.utils.clip_grad_norm(glow.module.parameters(), 5)
+        optimizer.step()
+
+        # update loss log
+        log_c.append(loss_c.item())
+        log_s.append(loss_s.item())
+        log_mse.append(loss_mse.item())
+
+        # save image
+        if i % args.print_interval == 0:
+            with torch.no_grad():
+                # stylized ---> z ---> content
+                z_stylized = glow(stylized, forward=True)
+                real = glow(z_stylized, forward=False, style=z_c)
+
+                # pick another content
+                another_content = next(content_iter).to(local_rank)
+
+                # stylized ---> z ---> another real
+                z_ac = glow(another_content, forward=True)
+                another_real = glow(z_stylized, forward=False, style=z_ac)
+
+            output_name = os.path.join(args.save_dir, "%06d.jpg" % i)
+            output_images = torch.cat((content_images.cpu(), style_images.cpu(), stylized.cpu(),
+                                        real.cpu(), another_content.cpu(), another_real.cpu()),
+                                      0)
+            save_image(output_images, output_name, nrow=args.batch_size)
+
+            print("iter %d   time/iter: %.2f   loss_c: %.3f   loss_s: %.3f   loss_mse: %.3f" % (i,
+                                                                          (time.time()-Time)/args.print_interval,
+                                                                          np.mean(np.array(log_c)), np.mean(np.array(log_s)),
+                                                                          np.mean(np.array(log_mse))
+                                                                           ))
+            log_c = []
+            log_s = []
+            Time = time.time()
+
+
+        if (i + 1) % args.save_model_interval == 0 or (i + 1) == args.max_iter:
+            state_dict = glow.module.state_dict()
+            for key in state_dict.keys():
+                state_dict[key] = state_dict[key].to(torch.device('cpu'))
+
+            state = {'iter': i, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
+            torch.save(state, os.path.join(args.save_dir, "%06d.pth" % i))
+
+else:
+    train_dataset = AlignedDataSet(args)
+    train_sampler = DistributedSampler(train_dataset)
+    train_dataloader = data.DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.n_threads, sampler=train_sampler)
+    content_examples = []
+    style_examples = []
+    for i in range(args.n_save_img):
+        content_examples.append(train_dataset[i]["content"].unsqueeze(0).to(local_rank))
+        style_examples.append(train_dataset[i]["style"].unsqueeze(0).to(local_rank))
+    content_examples = torch.cat(content_examples, dim=0)
+    style_examples = torch.cat(style_examples, dim=0)
+
+    checkpoints_save_dir = os.path.join(args.save_dir, "checkpoints/")
+    if not os.path.exists(checkpoints_save_dir):
+        os.mkdir(checkpoints_save_dir)
+    images_save_dir = os.path.join(args.save_dir, "images/")
+    if not os.path.exists(images_save_dir):
+        os.mkdir(images_save_dir)
+
+    argsDict = args.__dict__
+    with open(os.path.join(args.save_dir, 'setting.txt'), 'w') as f:
+        f.writelines('------------------ start ------------------' + '\n')
+        for eachArg, value in argsDict.items():
+            f.writelines(eachArg + ' : ' + str(value) + '\n')
+        f.writelines('------------------- end -------------------')
+    # -----------------------training------------------------
+    for epoch in range(args.start_epoch, args.max_epoch):
+        for i, data in enumerate(train_dataloader):
+            content_images = data["content"].to(local_rank)
+            style_images = data["style"].to(local_rank)
+            if epoch == args.start_epoch and i == 0:
+                with torch.no_grad():
+                  _ = glow.module(content_images, forward=True)
+                  continue
+
+            z_c = glow(content_images, forward=True)
+            z_s = glow(style_images, forward=True)
+            # reverse
+            stylized = glow(z_c, forward=False, style=z_s)  # TODO: fix DDP problem
+
+            loss_c, loss_s = encoder(content_images, style_images, stylized)
+            loss_c = loss_c.mean()
+            loss_s = loss_s.mean()
+            loss_mse = mseloss(content_images, stylized)
+            loss_style = args.content_weight * loss_c + args.style_weight * loss_s + args.mse_weight * loss_mse
+
+            # optimizer update
+            optimizer.zero_grad()
+            loss_style.backward()
+            nn.utils.clip_grad_norm(glow.module.parameters(), 5)
+            optimizer.step()
+
+            # update loss log
+            log_c.append(loss_c.item())
+            log_s.append(loss_s.item())
+            log_mse.append(loss_mse.item())
+
+        if (epoch + 1) % args.save_epoch_freq == 0:
+            with torch.no_grad():
+                z_c_examples = glow(content_examples, forward=True)
+                z_s_examples = glow(style_examples, forward=True)
+                stylized = glow(z_c_examples, forward=False, style=z_s_examples)
+                output_images = torch.cat((content_examples, style_examples, stylized), dim=0)
+                output_name = os.path.join(images_save_dir, "%05d.jpg" % epoch)
+                save_image(output_images, output_name, nrow=args.save_epoch_freq)
+
+            state_dict = glow.module.state_dict()
+            state = {'epoch': epoch, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
+            torch.save(state, os.path.join(checkpoints_save_dir, "%05d.pth" % (epoch + 1)))
+            print("epoch %d   time/iter: %.2f   loss_c: %.3f   loss_s: %.3f   loss_mse: %.3f" % (epoch, (time.time() - Time) / args.save_epoch_freq, log_c[-1], log_s[-1], log_mse[-1]))
+            log_c = []
+            log_s = []
+            Time = time.time()
