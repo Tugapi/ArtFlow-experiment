@@ -62,7 +62,7 @@ class AlignedDataSet(data.Dataset):
         content_input = self.transform(content_img)
         style_input = self.transform(style_img)
 
-        return [content_input, style_input]
+        return {"content": content_input, "style": style_input}
 
     def __len__(self):
         return self.content_num
