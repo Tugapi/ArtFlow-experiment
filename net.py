@@ -140,5 +140,5 @@ class Net(nn.Module):
         loss_c = self.calc_content_loss(stylized_feats[-1], content_feat)
         loss_s = self.calc_style_loss(stylized_feats[0], style_feats[0])
         for i in range(1, 4):
-            loss_s += self.calc_style_loss(stylized_feats[i], style_feats[i])
+            loss_s = loss_s + self.calc_style_loss(stylized_feats[i], style_feats[i])
         return loss_c, loss_s

@@ -345,8 +345,12 @@ class Glow(nn.Module):
         
         self.adain = AdaIN()
         
-    def forward(self, input, forward=True, style=None):
-        if forward:
+    def forward(self, input, entire=False, forward=True, style=None):
+        if entire:
+            z_c = self._forward(input)
+            stylized = self._reverse(z_c, style=style)
+            return stylized
+        elif forward:
             return self._forward(input, style=style)
         else:
             return self._reverse(input, style=style)
@@ -356,12 +360,16 @@ class Glow(nn.Module):
         for block in self.blocks:
             z = block(z)
         if style is not None:
+            for block in self.blocks:
+                style = block(style)
             z = self.adain(z, style)
         return z
 
     def _reverse(self, z, style=None):
         out = z
         if style is not None:
+            for block in self.blocks:
+                style = block(style)
             out = self.adain(out, style)
         for i, block in enumerate(self.blocks[::-1]):
             out = block.reverse(out)
