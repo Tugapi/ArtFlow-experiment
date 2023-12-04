@@ -260,10 +260,8 @@ else:
                   _ = glow.module(content_images, forward=True)
                   continue
 
-            z_c = glow(content_images, forward=True)
-            z_s = glow(style_images, forward=True)
             # reverse
-            stylized = glow(z_c, forward=False, style=z_s)  # TODO: fix DDP problem
+            stylized = glow(content_images, style=style_images, entire=True)
 
             loss_c, loss_s = encoder(content_images, style_images, stylized)
             loss_c = loss_c.mean()
@@ -285,11 +283,10 @@ else:
         if (epoch + 1) % args.save_epoch_freq == 0:
             with torch.no_grad():
                 z_c_examples = glow(content_examples, forward=True)
-                z_s_examples = glow(style_examples, forward=True)
-                stylized = glow(z_c_examples, forward=False, style=z_s_examples)
+                stylized = glow(z_c_examples, forward=False, style=style_examples)
                 output_images = torch.cat((content_examples, style_examples, stylized), dim=0)
                 output_name = os.path.join(images_save_dir, "%05d.jpg" % epoch)
-                save_image(output_images, output_name, nrow=args.save_epoch_freq)
+                save_image(output_images, output_name, nrow=args.n_save_img)
 
             state_dict = glow.module.state_dict()
             state = {'epoch': epoch, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
