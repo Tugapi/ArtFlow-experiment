@@ -15,6 +15,7 @@ import time
 
 from custom_dataset.flatfolder_dataset import train_transform, FlatFolderDataset
 from custom_dataset.aligned_dataset import AlignedDataSet
+from custom_dataset.unaligned_dataset import UnAlignedDataSet
 import net
 from sampler import InfiniteSamplerWrapper
 
@@ -136,45 +137,140 @@ Time = time.time()
 
 
 # -------------------------------------------------------------
+# if not (args.aligned):
+#     content_tf = train_transform(args.load_size, args.img_size)
+#     style_tf = train_transform(args.load_size, args.img_size)
+#
+#     content_dataset = FlatFolderDataset(args.content_dir, content_tf)
+#     style_dataset = FlatFolderDataset(args.style_dir, style_tf)
+#
+#     content_iter = iter(data.DataLoader(
+#         content_dataset, batch_size=args.batch_size,
+#         sampler=InfiniteSamplerWrapper(content_dataset),
+#         num_workers=args.n_threads))
+#     style_iter = iter(data.DataLoader(
+#         style_dataset, batch_size=args.batch_size,
+#         sampler=InfiniteSamplerWrapper(style_dataset),
+#         num_workers=args.n_threads))
+#
+#     # -----------------------training------------------------
+#     for i in range(args.start_iter, args.max_iter):
+#         adjust_learning_rate(optimizer, iteration_count=i)
+#         content_images = next(content_iter).to(local_rank)
+#         style_images = next(style_iter).to(local_rank)
+#
+#         # glow forward: real -> z_real, style -> z_style
+#         if i == args.start_iter:
+#             with torch.no_grad():
+#                 _ = glow.module(content_images, forward=True)
+#                 continue
+#
+#         # (log_p, logdet, z_outs) = glow()
+#         z_c = glow(content_images, forward=True)
+#         z_s = glow(style_images, forward=True)
+#         # reverse
+#         stylized = glow(z_c, forward=False, style=z_s)
+#
+#         loss_c, loss_s = encoder(content_images, style_images, stylized)
+#         loss_c = loss_c.mean()
+#         loss_s = loss_s.mean()
+#         loss_mse = mseloss(content_images, stylized)
+#         loss_style = args.content_weight*loss_c + args.style_weight*loss_s + args.mse_weight*loss_mse
+#
+#         # optimizer update
+#         optimizer.zero_grad()
+#         loss_style.backward()
+#         nn.utils.clip_grad_norm(glow.module.parameters(), 5)
+#         optimizer.step()
+#
+#         # update loss log
+#         log_c.append(loss_c.item())
+#         log_s.append(loss_s.item())
+#         log_mse.append(loss_mse.item())
+#
+#         # save image
+#         if i % args.print_interval == 0:
+#             with torch.no_grad():
+#                 # stylized ---> z ---> content
+#                 z_stylized = glow(stylized, forward=True)
+#                 real = glow(z_stylized, forward=False, style=z_c)
+#
+#                 # pick another content
+#                 another_content = next(content_iter).to(local_rank)
+#
+#                 # stylized ---> z ---> another real
+#                 z_ac = glow(another_content, forward=True)
+#                 another_real = glow(z_stylized, forward=False, style=z_ac)
+#
+#             output_name = os.path.join(args.save_dir, "%06d.jpg" % i)
+#             output_images = torch.cat((content_images.cpu(), style_images.cpu(), stylized.cpu(),
+#                                         real.cpu(), another_content.cpu(), another_real.cpu()),
+#                                       0)
+#             save_image(output_images, output_name, nrow=args.batch_size)
+#
+#             print("iter %d   time/iter: %.2f   loss_c: %.3f   loss_s: %.3f   loss_mse: %.3f" % (i,
+#                                                                           (time.time()-Time)/args.print_interval,
+#                                                                           np.mean(np.array(log_c)), np.mean(np.array(log_s)),
+#                                                                           np.mean(np.array(log_mse))
+#                                                                            ))
+#             log_c = []
+#             log_s = []
+#             Time = time.time()
+#
+#
+#         if (i + 1) % args.save_model_interval == 0 or (i + 1) == args.max_iter:
+#             state_dict = glow.module.state_dict()
+#             for key in state_dict.keys():
+#                 state_dict[key] = state_dict[key].to(torch.device('cpu'))
+#
+#             state = {'iter': i, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
+#             torch.save(state, os.path.join(args.save_dir, "%06d.pth" % i))
 if not (args.aligned):
-    content_tf = train_transform(args.load_size, args.img_size)
-    style_tf = train_transform(args.load_size, args.img_size)
+    train_dataset = UnAlignedDataSet(args)
+else:
+    train_dataset = AlignedDataSet(args)
+train_sampler = DistributedSampler(train_dataset)
+train_dataloader = data.DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.n_threads, sampler=train_sampler)
+content_examples = []
+style_examples = []
+for i in range(args.n_save_img):
+    content_examples.append(train_dataset[i]["content"].unsqueeze(0).to(local_rank))
+    style_examples.append(train_dataset[i]["style"].unsqueeze(0).to(local_rank))
+content_examples = torch.cat(content_examples, dim=0)
+style_examples = torch.cat(style_examples, dim=0)
 
-    content_dataset = FlatFolderDataset(args.content_dir, content_tf)
-    style_dataset = FlatFolderDataset(args.style_dir, style_tf)
+checkpoints_save_dir = os.path.join(args.save_dir, "checkpoints/")
+if not os.path.exists(checkpoints_save_dir):
+    os.mkdir(checkpoints_save_dir)
+images_save_dir = os.path.join(args.save_dir, "images/")
+if not os.path.exists(images_save_dir):
+    os.mkdir(images_save_dir)
 
-    content_iter = iter(data.DataLoader(
-        content_dataset, batch_size=args.batch_size,
-        sampler=InfiniteSamplerWrapper(content_dataset),
-        num_workers=args.n_threads))
-    style_iter = iter(data.DataLoader(
-        style_dataset, batch_size=args.batch_size,
-        sampler=InfiniteSamplerWrapper(style_dataset),
-        num_workers=args.n_threads))
-
-    # -----------------------training------------------------
-    for i in range(args.start_iter, args.max_iter):
-        adjust_learning_rate(optimizer, iteration_count=i)
-        content_images = next(content_iter).to(local_rank)
-        style_images = next(style_iter).to(local_rank)
-
-        # glow forward: real -> z_real, style -> z_style
-        if i == args.start_iter:
+argsDict = args.__dict__
+with open(os.path.join(args.save_dir, 'setting.txt'), 'w') as f:
+    f.writelines('------------------ start ------------------' + '\n')
+    for eachArg, value in argsDict.items():
+        f.writelines(eachArg + ' : ' + str(value) + '\n')
+    f.writelines('------------------- end -------------------')
+# -----------------------training------------------------
+for epoch in range(args.start_epoch, args.max_epoch):
+    train_sampler.set_epoch(epoch)
+    for i, data in enumerate(train_dataloader):
+        content_images = data["content"].to(local_rank)
+        style_images = data["style"].to(local_rank)
+        if epoch == args.start_epoch and i == 0:
             with torch.no_grad():
-                _ = glow.module(content_images, forward=True)
-                continue
+              _ = glow.module(content_images, forward=True)
+              continue
 
-        # (log_p, logdet, z_outs) = glow()
-        z_c = glow(content_images, forward=True)
-        z_s = glow(style_images, forward=True)
         # reverse
-        stylized = glow(z_c, forward=False, style=z_s)
+        stylized = glow(content_images, style=style_images, entire=True)
 
         loss_c, loss_s = encoder(content_images, style_images, stylized)
         loss_c = loss_c.mean()
         loss_s = loss_s.mean()
         loss_mse = mseloss(content_images, stylized)
-        loss_style = args.content_weight*loss_c + args.style_weight*loss_s + args.mse_weight*loss_mse
+        loss_style = args.content_weight * loss_c + args.style_weight * loss_s + args.mse_weight * loss_mse
 
         # optimizer update
         optimizer.zero_grad()
@@ -187,111 +283,18 @@ if not (args.aligned):
         log_s.append(loss_s.item())
         log_mse.append(loss_mse.item())
 
-        # save image
-        if i % args.print_interval == 0:
-            with torch.no_grad():
-                # stylized ---> z ---> content
-                z_stylized = glow(stylized, forward=True)
-                real = glow(z_stylized, forward=False, style=z_c)
+    if (epoch + 1) % args.save_epoch_freq == 0 and local_rank == 0:
+        with torch.no_grad():
+            z_c_examples = glow(content_examples, forward=True)
+            stylized = glow(z_c_examples, forward=False, style=style_examples)
+            output_images = torch.cat((content_examples, style_examples, stylized), dim=0)
+            output_name = os.path.join(images_save_dir, "%05d.jpg" % epoch)
+            save_image(output_images, output_name, nrow=args.n_save_img)
 
-                # pick another content
-                another_content = next(content_iter).to(local_rank)
-
-                # stylized ---> z ---> another real
-                z_ac = glow(another_content, forward=True)
-                another_real = glow(z_stylized, forward=False, style=z_ac)
-
-            output_name = os.path.join(args.save_dir, "%06d.jpg" % i)
-            output_images = torch.cat((content_images.cpu(), style_images.cpu(), stylized.cpu(),
-                                        real.cpu(), another_content.cpu(), another_real.cpu()),
-                                      0)
-            save_image(output_images, output_name, nrow=args.batch_size)
-
-            print("iter %d   time/iter: %.2f   loss_c: %.3f   loss_s: %.3f   loss_mse: %.3f" % (i,
-                                                                          (time.time()-Time)/args.print_interval,
-                                                                          np.mean(np.array(log_c)), np.mean(np.array(log_s)),
-                                                                          np.mean(np.array(log_mse))
-                                                                           ))
-            log_c = []
-            log_s = []
-            Time = time.time()
-
-
-        if (i + 1) % args.save_model_interval == 0 or (i + 1) == args.max_iter:
-            state_dict = glow.module.state_dict()
-            for key in state_dict.keys():
-                state_dict[key] = state_dict[key].to(torch.device('cpu'))
-
-            state = {'iter': i, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
-            torch.save(state, os.path.join(args.save_dir, "%06d.pth" % i))
-
-else:
-    train_dataset = AlignedDataSet(args)
-    train_sampler = DistributedSampler(train_dataset)
-    train_dataloader = data.DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.n_threads, sampler=train_sampler)
-    content_examples = []
-    style_examples = []
-    for i in range(args.n_save_img):
-        content_examples.append(train_dataset[i]["content"].unsqueeze(0).to(local_rank))
-        style_examples.append(train_dataset[i]["style"].unsqueeze(0).to(local_rank))
-    content_examples = torch.cat(content_examples, dim=0)
-    style_examples = torch.cat(style_examples, dim=0)
-
-    checkpoints_save_dir = os.path.join(args.save_dir, "checkpoints/")
-    if not os.path.exists(checkpoints_save_dir):
-        os.mkdir(checkpoints_save_dir)
-    images_save_dir = os.path.join(args.save_dir, "images/")
-    if not os.path.exists(images_save_dir):
-        os.mkdir(images_save_dir)
-
-    argsDict = args.__dict__
-    with open(os.path.join(args.save_dir, 'setting.txt'), 'w') as f:
-        f.writelines('------------------ start ------------------' + '\n')
-        for eachArg, value in argsDict.items():
-            f.writelines(eachArg + ' : ' + str(value) + '\n')
-        f.writelines('------------------- end -------------------')
-    # -----------------------training------------------------
-    for epoch in range(args.start_epoch, args.max_epoch):
-        for i, data in enumerate(train_dataloader):
-            content_images = data["content"].to(local_rank)
-            style_images = data["style"].to(local_rank)
-            if epoch == args.start_epoch and i == 0:
-                with torch.no_grad():
-                  _ = glow.module(content_images, forward=True)
-                  continue
-
-            # reverse
-            stylized = glow(content_images, style=style_images, entire=True)
-
-            loss_c, loss_s = encoder(content_images, style_images, stylized)
-            loss_c = loss_c.mean()
-            loss_s = loss_s.mean()
-            loss_mse = mseloss(content_images, stylized)
-            loss_style = args.content_weight * loss_c + args.style_weight * loss_s + args.mse_weight * loss_mse
-
-            # optimizer update
-            optimizer.zero_grad()
-            loss_style.backward()
-            nn.utils.clip_grad_norm(glow.module.parameters(), 5)
-            optimizer.step()
-
-            # update loss log
-            log_c.append(loss_c.item())
-            log_s.append(loss_s.item())
-            log_mse.append(loss_mse.item())
-
-        if (epoch + 1) % args.save_epoch_freq == 0:
-            with torch.no_grad():
-                z_c_examples = glow(content_examples, forward=True)
-                stylized = glow(z_c_examples, forward=False, style=style_examples)
-                output_images = torch.cat((content_examples, style_examples, stylized), dim=0)
-                output_name = os.path.join(images_save_dir, "%05d.jpg" % epoch)
-                save_image(output_images, output_name, nrow=args.n_save_img)
-
-            state_dict = glow.module.state_dict()
-            state = {'epoch': epoch, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
-            torch.save(state, os.path.join(checkpoints_save_dir, "%05d.pth" % (epoch + 1)))
-            print("epoch %d   time/iter: %.2f   loss_c: %.3f   loss_s: %.3f   loss_mse: %.3f" % (epoch, (time.time() - Time) / args.save_epoch_freq, log_c[-1], log_s[-1], log_mse[-1]))
-            log_c = []
-            log_s = []
-            Time = time.time()
+        state_dict = glow.module.state_dict()
+        state = {'epoch': epoch, 'state_dict': state_dict, 'optimizer': optimizer.state_dict()}
+        torch.save(state, os.path.join(checkpoints_save_dir, "%05d.pth" % (epoch + 1)))
+        print("epoch %d   time/iter: %.2f   loss_c: %.3f   loss_s: %.3f   loss_mse: %.3f" % (epoch, (time.time() - Time) / args.save_epoch_freq, log_c[-1], log_s[-1], log_mse[-1]))
+        log_c = []
+        log_s = []
+        Time = time.time()
