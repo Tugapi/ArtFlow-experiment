@@ -29,7 +29,8 @@ def make_dataset(dir, max_dataset_size=float("inf")):
 
 def transform(img_size):
     transform_list = [
-        transforms.Resize(size=(img_size, img_size)),
+        transforms.Resize(size=(img_size + 30, img_size + 30)),
+        transforms.RandomCrop(size=(img_size, img_size)),
         transforms.ToTensor()
     ]
     return transforms.Compose(transform_list)
