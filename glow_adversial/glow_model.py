@@ -8,27 +8,6 @@ from scipy import linalg as la
 logabs = lambda x: torch.log(torch.abs(x))
 
 
-class AdaIN(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, content, style_std, style_mean):
-        assert (content.size()[:2] == style_std.size()[:2]) and (content.size()[:2] == style_mean.size()[:2])
-        size = content.size()
-        content_mean, content_std = self.calc_mean_std(content)
-        normalized_feat = (content - content_mean.expand(size)) / content_std.expand(size)
-        return normalized_feat * style_std.expand(size) + style_mean.expand(size)
-
-    def calc_mean_std(self, feat, eps=1e-5):
-        size = feat.size()
-        assert (len(size) == 4)
-        N, C = size[:2]
-        feat_var = feat.view(N, C, -1).var(dim=2) + eps
-        feat_std = feat_var.sqrt().view(N, C, 1, 1)
-        feat_mean = feat.view(N, C, -1).mean(dim=2).view(N, C, 1, 1)
-        return feat_mean, feat_std
-
-
 class ActNorm(nn.Module):
     def __init__(self, in_channel):
         super().__init__()
