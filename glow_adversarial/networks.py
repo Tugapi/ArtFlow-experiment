@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
-from glow_adversial.glow_model import Glow
+from glow_adversarial.glow_model import Glow
 
 
 class AdaIN(nn.Module):
