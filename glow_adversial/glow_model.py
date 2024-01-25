@@ -258,7 +258,7 @@ class Block(nn.Module):
 
         return out, z_new
 
-    def reverse(self, z, output):
+    def reverse(self, z, output=None):
         if self.split:
             input = torch.cat([output, z], 1)
         else:
@@ -299,8 +299,8 @@ class Glow(nn.Module):
 
         return z_outs
 
-    def reverse(self, z_list, reconstruct=False):
+    def reverse(self, z_list):
         input = self.blocks[-1].reverse(z_list[-1])
         for i, block in enumerate(self.blocks[-2::-1]):
-            input = block.reverse(input, z_list[-(i + 2)], reconstruct=reconstruct)
+            input = block.reverse(input, z_list[-(i + 2)])
         return input
