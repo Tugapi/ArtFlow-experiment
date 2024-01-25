@@ -82,6 +82,7 @@ class InvConv2dLU(nn.Module):
         q, _ = la.qr(weight)
         w_p, w_l, w_u = la.lu(q.astype(np.float32))
         w_s = np.diag(w_u)
+        w_s.setflags(write=True)
         w_u = np.triu(w_u, 1)
         u_mask = np.triu(np.ones_like(w_u), 1)
         l_mask = u_mask.T
@@ -278,7 +279,7 @@ class Block(nn.Module):
 
 
 class Glow(nn.Module):
-    def __init__(self, in_channel, n_flow, n_block, affine=True, conv_lu=True, use_sigmoid=True):
+    def __init__(self, in_channel=3, n_flow=4, n_block=2, affine=True, conv_lu=True, use_sigmoid=True):
         super().__init__()
 
         self.blocks = nn.ModuleList()
