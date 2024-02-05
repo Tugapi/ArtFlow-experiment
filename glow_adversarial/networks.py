@@ -159,7 +159,7 @@ class AffineA(nn.Module):
 
 class NetG(nn.Module):
     def __init__(self,
-                 in_resolution=256,
+                 in_resolution=128,
                  in_channel=3, n_flow=4, n_block=2, affine=True, conv_lu=True, use_sigmoid=True, latent_z_length=512,
                  w_length=512, normalize=True, use_wscale=True, lrmul=0.01, gain=2 ** 0.5):
         super().__init__()
@@ -207,9 +207,9 @@ class NetG(nn.Module):
 
 class NetD(nn.Module):
     def __init__(self,
-                 resolution=256,
+                 resolution=128,
                  num_channels=3,
-                 fmap_max=512,
+                 fmap_max=512,  # max channel number in D
                  # f=[1, 2, 1] by default
                  f=None  # (Huge overload, if you don't have enough resources, please pass it as `f = None`)
                  ):
@@ -281,3 +281,6 @@ if __name__ == '__main__':
     latent = torch.randn((1, 512), dtype=torch.float32)
     output = netG(x, latent)
     print(output.shape)
+    netD = NetD()
+    score = netD(output)
+    print(score.shape)
