@@ -98,7 +98,7 @@ class InvConv2dLU(nn.Module):
         self.register_buffer('s_sign', torch.sign(w_s))
         self.register_buffer('l_eye', torch.eye(l_mask.shape[0]))
         self.w_l = nn.Parameter(w_l)
-        self.w_s = nn.Parameter(logabs(w_s))
+        self.logabs_w_s = nn.Parameter(logabs(w_s))
         self.w_u = nn.Parameter(w_u)
 
     def forward(self, input):
@@ -111,7 +111,7 @@ class InvConv2dLU(nn.Module):
         weight = (
             self.w_p
             @ (self.w_l * self.l_mask + self.l_eye)
-            @ ((self.w_u * self.u_mask) + torch.diag(self.s_sign * torch.exp(self.w_s)))
+            @ ((self.w_u * self.u_mask) + torch.diag(self.s_sign * torch.exp(self.logabs_w_s)))
         )
 
         return weight.unsqueeze(2).unsqueeze(3)
@@ -130,9 +130,10 @@ class ZeroConv2d(nn.Module):
         self.conv.weight.data.zero_()
         self.conv.bias.data.zero_()
         self.scale = nn.Parameter(torch.zeros(1, out_channel, 1, 1))
+        self.padding = padding
 
     def forward(self, input):
-        out = F.pad(input, [1, 1, 1, 1], value=1)
+        out = F.pad(input, [self.padding, self.padding, self.padding, self.padding], value=1)
         out = self.conv(out)
         out = out * torch.exp(self.scale * 3)
 
@@ -229,6 +230,9 @@ class Flow(nn.Module):
 
 
 class Block(nn.Module):
+    """
+    One Block is consist of n_flow steps of Flows.
+    """
     def __init__(self, in_channel, n_flow, split=True, affine=True, conv_lu=True, use_sigmoid=True):
         super().__init__()
 
@@ -252,7 +256,6 @@ class Block(nn.Module):
 
         if self.split:
             out, z_new = out.chunk(2, 1)  # separate z from the Block output
-
         else:
             z_new = out  # treat the whole Block output as z
 
@@ -302,5 +305,17 @@ class Glow(nn.Module):
     def reverse(self, z_list):
         input = self.blocks[-1].reverse(z_list[-1])
         for i, block in enumerate(self.blocks[-2::-1]):
-            input = block.reverse(input, z_list[-(i + 2)])
+            input = block.reverse(z_list[-(i + 2)], input)
         return input
+
+
+if __name__ == '__main__':
+    x = torch.rand((1, 3, 8, 8), dtype=torch.float32)
+    print(x)
+    glow = Glow()
+    z_outs = glow(x)
+    for z_out in z_outs:
+        print(z_out.shape)
+    x_reconstruct = glow.reverse(z_outs)
+    print(x_reconstruct.shape)
+    print(x_reconstruct)
