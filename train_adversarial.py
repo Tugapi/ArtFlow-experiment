@@ -10,6 +10,7 @@ from torchvision.utils import save_image
 import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
 import time
+import matplotlib.pyplot as plt
 from custom_dataset.unaligned_dataset import UnAlignedDataSet
 from glow_adversarial import *
 import options
@@ -30,7 +31,7 @@ torch.cuda.set_device(local_rank)
 # dataloader
 train_dataset = UnAlignedDataSet(args)
 train_sampler = DistributedSampler(train_dataset)
-train_dataloader = data.DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.n_threads, sampler=train_sampler)
+train_dataloader = data.DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.n_threads, sampler=train_sampler, drop_last=True)
 content_examples = []
 for i in range(args.n_save_img):
     content_examples.append(train_dataset[i]["content"].unsqueeze(0).to(local_rank))
@@ -66,14 +67,14 @@ schedule_D = torch.optim.lr_scheduler.ExponentialLR(optim_D, gamma=0.99)
 
 
 if __name__ == '__main__':
-    if not os.path.exists(args.save_dir):
+    if local_rank == 0 and not os.path.exists(args.save_dir):
         os.mkdir(args.save_dir)
 
     checkpoints_save_dir = os.path.join(args.save_dir, "checkpoints/")
-    if not os.path.exists(checkpoints_save_dir):
+    if local_rank == 0 and not os.path.exists(checkpoints_save_dir):
         os.mkdir(checkpoints_save_dir)
     images_save_dir = os.path.join(args.save_dir, "images/")
-    if not os.path.exists(images_save_dir):
+    if local_rank == 0 and not os.path.exists(images_save_dir):
         os.mkdir(images_save_dir)
     # -------------------------------------------------------
     argsDict = args.__dict__
@@ -147,4 +148,10 @@ if __name__ == '__main__':
             netG_state = {'epoch': epoch, 'state_dict': netG.module.state_dict(), 'optimizer': optim_G.state_dict()}
             torch.save(netD_state, os.path.join(checkpoints_save_dir, "%04d_D.pth" % (epoch)))
             torch.save(netG_state, os.path.join(checkpoints_save_dir, "%04d_G.pth" % (epoch)))
+            plt.figure(0)
+            plt.plot(G_losses)
+            plt.savefig(os.path.join(args.save_dir, 'G_loss.eps'))
+            plt.figure(1)
+            plt.plot(D_losses)
+            plt.savefig(os.path.join(args.save_dir, 'D_loss.eps'))
             print("epoch: %d  Results have been saved." % (epoch))

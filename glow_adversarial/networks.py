@@ -276,9 +276,9 @@ class NetD(nn.Module):
 
 
 if __name__ == '__main__':
-    x = torch.ones((1, 3, 128, 128), dtype=torch.float32)
+    x = torch.ones((4, 3, 128, 128), dtype=torch.float32)
     netG = NetG(128)
-    latent = torch.randn((1, 512), dtype=torch.float32)
+    latent = torch.randn((4, 512), dtype=torch.float32)
     output = netG(x, latent)
     print(output.shape)
     netD = NetD()
