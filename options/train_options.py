@@ -28,7 +28,9 @@ train_parser.add_argument('--save_epoch_freq', type=int, default=5,
                           help='frequency of saving checkpoints and images at the end of epochs')
 train_parser.add_argument("--n_save_img", default=5, type=int, help="number of saved images")
 train_parser.add_argument('--start_epoch', type=int, default=1, help='starting epoch')
-train_parser.add_argument('--resume', default='', type=str, metavar='PATH', help='file name of the latest checkpoint')
+train_parser.add_argument('--resume_G', default='', type=str, metavar='PATH', help='file name of the latest generator checkpoint')
+train_parser.add_argument('--resume_D', default='', type=str, metavar='PATH', help='file name of the latest discriminator checkpoint')
+
 
 # model configs
 train_parser.add_argument('--input_channel', default=3, type=int, help='input image channels')

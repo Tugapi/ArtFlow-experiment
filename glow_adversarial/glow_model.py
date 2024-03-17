@@ -22,17 +22,17 @@ class ActNorm(nn.Module):
             flatten = input.permute(1, 0, 2, 3).contiguous().view(input.shape[1], -1)
             mean = (
                 flatten.mean(1)
-                    .unsqueeze(1)
-                    .unsqueeze(2)
-                    .unsqueeze(3)
-                    .permute(1, 0, 2, 3)
+                .unsqueeze(1)
+                .unsqueeze(2)
+                .unsqueeze(3)
+                .permute(1, 0, 2, 3)
             )
             std = (
                 flatten.std(1)
-                    .unsqueeze(1)
-                    .unsqueeze(2)
-                    .unsqueeze(3)
-                    .permute(1, 0, 2, 3)
+                .unsqueeze(1)
+                .unsqueeze(2)
+                .unsqueeze(3)
+                .permute(1, 0, 2, 3)
             )
             self.loc.data.copy_(-mean)
             self.scale.data.copy_(1 / (std + 1e-6))
@@ -57,7 +57,7 @@ class InvConv2d(nn.Module):
         if out_channel is None:
             out_channel = in_channel
         weight = torch.randn(in_channel, out_channel)
-        q, _ = torch.qr(weight)
+        q, _ = torch.linalg.qr(weight)
         weight = q.unsqueeze(2).unsqueeze(3)
         self.weight = nn.Parameter(weight)
 
@@ -109,9 +109,9 @@ class InvConv2dLU(nn.Module):
 
     def calc_weight(self):
         weight = (
-            self.w_p
-            @ (self.w_l * self.l_mask + self.l_eye)
-            @ ((self.w_u * self.u_mask) + torch.diag(self.s_sign * torch.exp(self.logabs_w_s)))
+                self.w_p
+                @ (self.w_l * self.l_mask + self.l_eye)
+                @ ((self.w_u * self.u_mask) + torch.diag(self.s_sign * torch.exp(self.logabs_w_s)))
         )
 
         return weight.unsqueeze(2).unsqueeze(3)
@@ -233,6 +233,7 @@ class Block(nn.Module):
     """
     One Block is consist of n_flow steps of Flows.
     """
+
     def __init__(self, in_channel, n_flow, split=True, affine=True, conv_lu=True, use_sigmoid=True):
         super().__init__()
 

@@ -77,12 +77,28 @@ if __name__ == '__main__':
     if local_rank == 0 and not os.path.exists(images_save_dir):
         os.mkdir(images_save_dir)
     # -------------------------------------------------------
-    argsDict = args.__dict__
-    with open(os.path.join(args.save_dir, 'setting.txt'), 'w') as f:
-        f.writelines('------------------ start ------------------' + '\n')
-        for eachArg, value in argsDict.items():
-            f.writelines(eachArg + ' : ' + str(value) + '\n')
-        f.writelines('------------------- end -------------------')
+    if local_rank == 0:
+        argsDict = args.__dict__
+        with open(os.path.join(args.save_dir, 'setting.txt'), 'w') as f:
+            f.writelines('------------------ start ------------------' + '\n')
+            for eachArg, value in argsDict.items():
+                f.writelines(eachArg + ' : ' + str(value) + '\n')
+            f.writelines('------------------- end -------------------')
+    # ---------------------resume training-------------------
+    if args.resume_G:
+        assert os.path.isfile(args.resume_G), "--------no checkpoint found---------"
+        print("--------loading checkpoint----------")
+        print("=> loading checkpoint '{}'".format(args.resume_G))
+        checkpoint_G = torch.load(args.resume_G)
+        netG.load_state_dict(checkpoint_G['state_dict'])
+        optim_G.load_state_dict(checkpoint_G['state_dict'])
+    if args.resume_D:
+        assert os.path.isfile(args.resume_D), "--------no checkpoint found---------"
+        print("--------loading checkpoint----------")
+        print("=> loading checkpoint '{}'".format(args.resume_D))
+        checkpoint_D = torch.load(args.resume_D)
+        netD.load_state_dict(checkpoint_D['state_dict'])
+        optim_D.load_state_dict(checkpoint_D['state_dict'])
     # -----------------------training------------------------
     G_losses = []
     D_losses = []
@@ -98,7 +114,7 @@ if __name__ == '__main__':
             z = torch.randn([args.batch_size, args.z_length]).to(local_rank)  # TODO: how to choose z?
             content_images = data["content"].to(local_rank)
             style_images = data["style"].to(local_rank)
-            if epoch == args.start_epoch and i == 0:
+            if args.start_epoch == 1 and epoch == args.start_epoch and i == 0:
                 with torch.no_grad():
                   _ = netG(content_images, z)
                   continue
