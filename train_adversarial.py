@@ -90,15 +90,15 @@ if __name__ == '__main__':
         print("--------loading checkpoint----------")
         print("=> loading checkpoint '{}'".format(args.resume_G))
         checkpoint_G = torch.load(args.resume_G)
-        netG.load_state_dict(checkpoint_G['state_dict'])
-        optim_G.load_state_dict(checkpoint_G['state_dict'])
+        netG.module.load_state_dict(checkpoint_G['state_dict'])
+        optim_G.load_state_dict(checkpoint_G['optimizer'])
     if args.resume_D:
         assert os.path.isfile(args.resume_D), "--------no checkpoint found---------"
         print("--------loading checkpoint----------")
         print("=> loading checkpoint '{}'".format(args.resume_D))
         checkpoint_D = torch.load(args.resume_D)
-        netD.load_state_dict(checkpoint_D['state_dict'])
-        optim_D.load_state_dict(checkpoint_D['state_dict'])
+        netD.module.load_state_dict(checkpoint_D['state_dict'])
+        optim_D.load_state_dict(checkpoint_D['optimizer'])
     # -----------------------training------------------------
     G_losses = []
     D_losses = []
