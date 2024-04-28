@@ -18,6 +18,7 @@ train_parser.add_argument('--beta2_D', type=float, default=0.999)
 train_parser.add_argument('--max_epoch', type=int, default=300)
 train_parser.add_argument('--batch_size', type=int, default=4)
 train_parser.add_argument('--penalty_weight', type=float, default=10.0, help='weight of gradient penalty term in d_loss')
+train_parser.add_argument('--lambda_idt', type=float, default=1, help='weight of identity loss term')
 train_parser.add_argument('--updateG_iter', type=int, default=2, help='how many iterations does D need to be updated before G is updated ')
 
 

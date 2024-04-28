@@ -64,6 +64,7 @@ optim_D = torch.optim.Adam(netD.parameters(), lr=args.lr_D, betas=(args.beta1_D,
 schedule_G = torch.optim.lr_scheduler.ExponentialLR(optim_G, gamma=0.99)
 schedule_D = torch.optim.lr_scheduler.ExponentialLR(optim_D, gamma=0.99)
 
+crit_idt = torch.nn.L1Loss()
 
 
 if __name__ == '__main__':
@@ -102,6 +103,7 @@ if __name__ == '__main__':
     # -----------------------training------------------------
     G_losses = []
     D_losses = []
+    Idt_losses = []
     G_loss = 0.0
     D_loss = 0.0
     for epoch in range(args.start_epoch, args.max_epoch + 1):
@@ -109,6 +111,7 @@ if __name__ == '__main__':
         time_start = time.time()
         g_losses = []
         d_losses = []
+        idt_losses = []
         train_sampler.set_epoch(epoch)
         for i, data in enumerate(train_dataloader):
             z = torch.randn([args.batch_size, args.z_length]).to(local_rank)  # TODO: how to choose z?
@@ -130,7 +133,6 @@ if __name__ == '__main__':
             optim_D.zero_grad()
             d_loss.backward()
             optim_D.step()
-
             if (i + 1) % args.updateG_iter == 0:
                 for param in netD.parameters():
                     param.requires_grad = False
@@ -144,11 +146,22 @@ if __name__ == '__main__':
                 optim_G.zero_grad()
                 g_loss.backward()
                 optim_G.step()
+                # Compute identity loss
+                if args.lambda_idt > 0:
+                    z3 = torch.randn([args.batch_size, args.z_length]).to(local_rank)  # TODO: how to choose z?
+                    idt_images = netG(style_images, z3)
+                    idt_loss = crit_idt(style_images, idt_images) * args.lambda_idt
+                    idt_losses.append(idt_loss.item())
+                    optim_G.zero_grad()
+                    g_loss.backward()
+                    optim_G.step()
+
                 for param in netD.parameters():
                     param.requires_grad = True
 
         D_losses.append(np.mean(d_losses))
         G_losses.append(np.mean(g_losses))
+        Idt_losses.append(np.mean(idt_losses))
         print("epoch: %d  time/epoch: %.2f  loss_G: %.3f  loss_D: %.3f" % (epoch, (time.time() - time_start), float(G_losses[-1]), float(D_losses[-1])))
         schedule_G.step()
         schedule_D.step()
@@ -170,4 +183,8 @@ if __name__ == '__main__':
             plt.figure(1)
             plt.plot(D_losses)
             plt.savefig(os.path.join(args.save_dir, 'D_loss.eps'))
+            if args.lambda_idt > 0:
+                plt.figure(2)
+                plt.plot(Idt_losses)
+                plt.savefig(os.path.join(args.save_dir, 'Idt_loss.eps'))
             print("epoch: %d  Results have been saved." % (epoch))
